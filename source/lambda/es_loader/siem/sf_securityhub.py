@@ -62,12 +62,12 @@ def split_findings_type(finding_type):
 
 
 def get_values_from_asff_resources(resources):
-    resource_dict = {}
-    resource_dict['_related_ip'] = []
+    resource_dict = {'_related_ip': []}
+    instance_id = "None"
     for resource in resources:
         if resource['Type'] == 'AwsEc2Instance':
-            instanceid = resource['Id'].split('/')[-1]
-            resource_dict['cloud'] = {'instance': {'id': instanceid}}
+            instance_id = resource['Id'].split('/')[-1]
+            resource_dict['cloud'] = {'instance': {'id': instance_id}}
             if ('Details' in resource
                     and 'AwsEc2Instance' in resource['Details']):
                 resource_dict['_related_ip'] += resource['Details'].get(
@@ -75,21 +75,21 @@ def get_values_from_asff_resources(resources):
                 resource_dict['_related_ip'] += resource['Details'].get(
                     'AwsEc2Instance').get('IpV6Addresses', [])
         elif resource['Type'] == 'AwsIamAccessKey':
-            accesskey = resource['Id'].split(':')[-1]
-            if accesskey == 'null':
-                accesskey = (resource['Details']['AwsIamAccessKey']
+            access_key = resource['Id'].split(':')[-1]
+            if access_key == 'null':
+                access_key = (resource['Details']['AwsIamAccessKey']
                              ['PrincipalId']).split(':')[0]
             name = resource['Details']['AwsIamAccessKey']['PrincipalName']
-            resource_dict['user'] = {'id': accesskey, 'name': name}
+            resource_dict['user'] = {'id': access_key, 'name': name}
         elif resource['Type'] == 'AwsEc2Volume':
             try:
-                instanceid = (resource['Details']['AwsEc2Volume']
+                instance_id = (resource['Details']['AwsEc2Volume']
                               ['Attachments'][0]['InstanceId'])
             except Exception:
-                # pass
+                pass
                 # to ignore Rule-269212
-                None
-            resource_dict['cloud'] = {'instance': {'id': instanceid}}
+                # None # This would seemingly do nothing
+            resource_dict['cloud'] = {'instance': {'id': instance_id}}
         elif resource['Type'] == 'AwsIamRole':
             name = resource['Id'].split('/')[-1]
             resource_dict['user'] = {'name': name}
