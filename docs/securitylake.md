@@ -23,11 +23,13 @@ Ignore Security Lake related parameters when running CDK / CloudFormation.
 1. Set delegated administrator if using AWS Organizations (optional) [Doc](https://docs.aws.amazon.com/security-lake/latest/userguide/multi-account-management.html)
 1. Enable Security Lake [Doc](https://docs.aws.amazon.com/security-lake/latest/userguide/getting-started.html)
 1. If you want to monitor multiple regions, configure rollup (Optional) [Doc](https://docs.aws.amazon.com/security-lake/latest/userguide/manage-regions.html)
-1. Set up subscribers in the region where you want to deploy SIME on OpenSearch [Doc](https://docs.aws.amazon.com/security-lake/latest/userguide/subscriber-management.html)
+1. Set up subscribers in the region where you want to deploy SIEM on OpenSearch [Doc](https://docs.aws.amazon.com/security-lake/latest/userguide/subscriber-management.html)
     * Data access method: `S3`
     * Subscriber credentials
         * Account Id: `AWS account where SIEM was deployed`
         * External ID: `(any string)`
+    * Log and event sources
+        * Select `All log and event sources` or make sure that the custom log sources you want to ingest are selected under `Specific log and event sources`
 1. **[Required]** Change the SQS of the created subscriber
     * Target SQS: AmazonSecurityLake-XXXXXXXX-XXXXXX-XXXXXX-XXXXXXXX-Main-Queue
     * Change visibility timeout from 5 minutes to `10 minutes`.
@@ -69,14 +71,14 @@ If neither matches, please set the following configuration in user.ini
 
 user.ini
 
-```
+```ini
 [securitylake]
 s3_key = [0-9a-f]{32}\.gz\.parquet|[Ss]ecurity[Ll]ake/|file_name_of_parquet
 ```
 
 Otherwise
 
-```
+```ini
 [securitylake]
 s3_key = [0-9a-f]{32}\.gz\.parquet|[Ss]ecurity[Ll]ake/|service_name_in_s3_path
 ```

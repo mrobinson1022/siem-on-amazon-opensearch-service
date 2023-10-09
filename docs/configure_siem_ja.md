@@ -8,6 +8,7 @@
 * [IoC による脅威情報の付与](#ioc-による脅威情報の付与)
 * [ログ取り込みの除外設定](#ログ取り込みの除外設定)
 * [OpenSearch Service の設定変更](#opensearch-service-の設定変更)
+* [Multi-AZ with Standby の設定](#multi-az-with-standby-の設定)
 * [AWS サービス以外のログの取り込み](#aws-サービス以外のログの取り込み)
 * [他の S3 バケットからニアリアルタイムの取り込み](#他の-s3-バケットからニアリアルタイムの取り込み)
 * [S3 バケットに保存された過去データの取り込み](#s3-バケットに保存された過去データの取り込み)
@@ -274,24 +275,27 @@ CloudTrail で、{'userIdentity': {'invokedBy': '*.amazonaws.com'}} と一致し
 
 複数のパラメータをそれぞれ設定することで、それら複数条件の OR として除外処理をします。`expression` の値は以下の例のように [JMESPath](https://github.com/jmespath/jmespath.py) に準拠した条件式を文字列で設定します (詳細は [JMESPath ドキュメント](https://jmespath.org/specification.html)を参照ください)。
 
-
 AND 条件
-```
+
+```ini
 field1==`value1` && field2==`value2`
 ```
 
 OR 条件
-```
+
+```ini
 field1==`value1` || field2==`value2`
 ```
 
 NOT 条件
-```
+
+```ini
 !(field1==`value1`)
 ```
 
 組み合わせた条件
-```
+
+```ini
 (field1==`value1` || field2==`value2`) && field3==`value3`
 ```
 
@@ -408,12 +412,94 @@ POST _template/log-aws-cloudtrail_mine
 }
 ```
 
+## Multi-AZ with Standby の設定
+
+Multi-AZ with Standby は、99.99% の可用性、プロダクションワークロードでの一貫したパフォーマンス、シンプルなドメイン設定と管理とを実現した、Amazon OpenSearch Service ドメインのデプロイオプションです。詳細は、公式ドキュメントの [Amazon OpenSearch Service でのマルチ AZ ドメインの設定](https://docs.aws.amazon.com/ja_jp/opensearch-service/latest/developerguide/managedomains-multiaz.html) をご参照ください
+
+以下の手順で Multi-AZ with Standby に変更できます。
+
+1. OpenSearch Dashbords の DevTools で index のレプリカ数を 2 に変更。すでに全てのインデックスでデータコピー (プライマリノードとレプリカの合計) を 3 の倍数している場合、実行は不要です。
+
+    ```http
+    PUT log*,metrics*/_settings
+    {
+        "index" : {
+            "number_of_replicas" : 2
+        }
+    }
+    ```
+
+1. デフォルト設定の変更 ( SIEM のバージョンが v2.10.1 以下の場合に実施)
+
+    いくつかの index はレプリカ数を 1 に固定しています。検証チェックのエラーを回避するために、自動でレプリカ数を 2 に拡張する設定にします。3 つのクエリがあるので、一つずつ実行して下さい
+
+    ```http
+    PUT _index_template/alert-history-indices_aws
+    {
+        "index_patterns": [".opendistro-alerting-alert-history-*"],
+        "priority": 0,
+        "template": {
+            "settings": {
+                "index.number_of_shards": 1,
+                "index.auto_expand_replicas": "1-2"
+            }
+        },
+        "_meta": {"description": "Provided by AWS. Do not edit"},
+        "version": 3
+    }
+
+
+    PUT _index_template/ism-history-indices_aws
+    {
+        "index_patterns": [".opendistro-ism-managed-index-history-*"],
+        "priority": 0,
+        "template": {
+            "settings": {
+                "index.number_of_shards": 1,
+                "index.auto_expand_replicas": "1-2"
+            }
+        },
+        "_meta": {"description": "Provided by AWS. Do not edit"},
+        "version": 3
+    }
+
+
+    PUT _index_template/default-opendistro-indices_aws
+    {
+        "index_patterns": [
+            ".opendistro-alerting-alerts",
+            ".opendistro-alerting-config",
+            ".opendistro-ism-config",
+            ".opendistro-job-scheduler-lock"
+        ],
+        "priority": 0,
+        "template": {
+            "settings": {
+                "index.number_of_shards": 1,
+                "index.auto_expand_replicas": "1-2"
+            }
+        },
+        "_meta": {"description": "Provided by AWS. Do not edit"},
+        "version": 3
+    }
+
+    ```
+
+1. AWS マネジメントコンソールから OpenSeaerch ドメインの設定をします
+    1. [**スタンバイが有効のドメイン**] を選択
+    1. 他の設定は環境に合わせて適切な項目を選択
+    1. [**変更の保存**] を選択して設定を更新
+    * ドライラン分析で [検証エラーでドライラン分析が完了しました。] となった場合で、具体的なエラーがリストされていない場合は、[**ドライラン分析**] のチェックを外して再度実行してください
+1. 数十分〜数時間で設定が完了します。完了後に、アベイラビリティゾーンが [スタンバイが有効な 3-AZ] となっていることを確認してください
+
+以上で設定は完了です
+
 ## AWS サービス以外のログの取り込み
 
 AWS 以外のログをログ用 S3 バケットにエクスポートすることで SIEM on OpenSearch Service に取り込むことができます。S3 へのエクスポートは Logstash や Fluentd のプラグインを使う方法があります。
 
-対応ファイル形式: JSON、CSV、テキスト、複数行テキスト、CEF、Parquet
-対応圧縮形式: gzip、bzip2、zip、無圧縮
+* 対応ファイル形式: JSON、CSV、テキスト、複数行テキスト、CEF、Parquet
+* 対応圧縮形式: gzip、bzip2、zip、無圧縮
 
 設定の基本的な流れを、Apache HTTP Server のログを例にして説明します
 
@@ -712,12 +798,12 @@ S3 バケットに保存されているログをバッチで OpenSearch Service 
 
 1. AWS マネジメントコンソールの Lambda コンソールに移動
 1. aes-siem-es-loader 関数に移動して以下の 2 つの環境変数名と値をメモします
-    * ES_ENDPOINT
+    * ENDPOINT
     * GEOIP_BUCKET
 1. 環境変数を EC2 インスタンスの Amazon Linux のターミナルに貼り付けます。値は環境に合わせて変更してください
 
     ```sh
-    export ES_ENDPOINT=search-aes-siem-XXXXXXXXXXXXXXXXXXXXXXXXXX.ap-northeast-1.es.amazonaws.com
+    export ENDPOINT=search-aes-siem-XXXXXXXXXXXXXXXXXXXXXXXXXX.ap-northeast-1.es.amazonaws.com
     export GEOIP_BUCKET=aes-siem-123456789012-geo
     ```
 
@@ -861,24 +947,21 @@ es-loader のログは JSON 形式で出力しているため、CloudWatch Logs 
 
 ### 1. 準備
 
-AWS CloudShell または Amazon Linux 2 を実行している Amazon Elastic Compute Cloud (Amazon EC2) インスタンスを使って CloudFormation テンプレートを作成します
+Amazon Linux 2023 を実行している Amazon Elastic Compute Cloud (Amazon EC2) インスタンスを使って CloudFormation テンプレートを作成します
 
 前提の環境)
 
-* AWS CloudShell または Amazon Linux 2 on Amazon EC2
+* Amazon Linux 2023 on Amazon EC2
   * "Development Tools"
-  * Python 3.8
-  * Python 3.8 libraries and header files
+  * Python 3 libraries and header files
+  * pip
   * Git
 
 上記がインストールされてない場合は以下を実行
 
 ```shell
-sudo yum groups mark install -y "Development Tools"
-sudo yum install -y amazon-linux-extras
-sudo amazon-linux-extras enable python3.8
-sudo yum install -y python38 python38-devel git jq
-sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+sudo dnf groupinstall -y "Development Tools"
+sudo dnf install -y python3-devel python3-pip git jq tar
 ```
 
 ### 2. SIEM on OpenSearch Service の clone

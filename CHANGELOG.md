@@ -6,6 +6,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.2a] - 2023-10-07
+### Fixed
+- Fixed regex error in ssl_cipher field of alb log #415
+
+### Security
+- PR security vulnerability of urllib3 from 1.26.11 to 1.26.17 #410,#411
+
+## [2.10.2] - 2023-10-05
+### Added
+- Added support for Amazon OpenSearch 2.9 #409
+- Added support for NGINX Web Server #408
+- Added enrichment feature for source IP address with X-Forwarded-For #407
+- Added support for Apache Web Server #405
+- Added support for Multi-AZ with Standby #403
+- Added logs exporter for EC2 instance Linux log #404
+- Added documents about SAML federation of Control Tower for OpenSearch Dashboards #393
+- Added Amazon Linux 2023 to CDK deployment platform #387
+- Added CDK/CloudFormation parameter to keep or override Log bucket policy #372
+
+### Changed
+- Lambda instruction set architectures from x86 to Arm64 in 6 additional regions #400
+- Updated AWS SDK for pandas from 3.1.0 to v3.3.0 #399
+- Enhanced validation for control tower integration #396
+
+### Deprecated
+- Amazon Linux 2 for CDK deployment platform
+
+### Fixed
+- Fixed dependency issue with ExecCustomResourceValidator during deployment #406
+- es_loader Error: sf_securityhub.py UnboundLocalError instanceid bug #405
+- Fixed an issue where VPC Endpoint could not be created in China region.#398
+
+## [2.10.1] - 2023-08-07
+### Added
+- Added STS VPC Endpoint for Control Tower/Security Lake integration when using VPC #391
+- Supports AWS il-central-1/Israel (Tel Aviv) Region #390
+- Added tls_connection_creation_time field to NLB #364
+- Added SSM VPC Endpoint when using VPC #387
+
+### Fixed
+- Fixed s3 and sqs vpce params #389
+- Fixed an error with fielddata on @id field in SecurityHub #386
+- Fixed issue that caused an error when there were duplicated subnet-id in cdk.json #385
+- Fixed log exclusion feature issue #384
+- Fixed index_metrics_exporter issue #383
+
 ## [2.10.0] - 2023-07-21
 ### Added
 - Supported Amazon OpenSearch 2.7 #381

@@ -50,13 +50,25 @@ Skip these steps if you want to send logs from your existing S3 bucket to SIEM o
 * The subnet you deploy is a private subnet
 * Select three different Availability Zones for the subnet. (Only one instance is deployed per AZ)
 * In Amazon VPC, enable both [**DNS hostnames**] and [**DNS resolution**]
-* `cdk.json` and `cdk.context.json` are created during the deployment, and ensure to save this file. It will be required to rerun the CDK used for the deployment of SIEM on OpenSearch Service
+* `cdk.json` and `cdk.context.json` are created during the deployment, and ensure to backup these files in AWS Systems Manager Parameter Store or somewhere. It will be required to rerun the CDK used for the deployment of SIEM on OpenSearch Service
 
 ### 1. Setting Up the AWS CDK Execution Environment
 
-1. Deploy an Amazon Elastic Compute Cloud (Amazon EC2) instance that runs Amazon Linux 2 (x86)
+1. Deploy an Amazon Elastic Compute Cloud (Amazon EC2) instance that runs Amazon Linux 2023 or Amazon Linux 2. The EC instance require at least 2 GB RAM
 1. Create a role with Admin permissions in AWS Identity and Access Management (IAM) and attach it to the Amazon EC2 instance
-1. Log in to the shell; install the development tools, Python 3.8 and development files, git, jq and tar; and get the source code from GitHub
+1. Log in to the shell; install the development tools, Python 3.8 or 3.9 and development files, git, jq and tar; and get the source code from GitHub
+
+    For Amazon Linux 2023
+
+    ```shell
+    export GIT_ROOT=$HOME
+    cd ${GIT_ROOT}
+    sudo dnf groupinstall -y "Development Tools"
+    sudo dnf install -y python3-devel python3-pip git jq tar
+    git clone https://github.com/aws-samples/siem-on-amazon-opensearch-service.git
+    ```
+
+    For Amazon Linux 2
 
    ```shell
    export GIT_ROOT=$HOME
@@ -107,7 +119,7 @@ From the root directory of the repository, navigate to the directory containing 
 
 ```bash
 cd ${GIT_ROOT}/siem-on-amazon-opensearch-service/ && source .venv/bin/activate
-cd source/cdk && cdk bootstrap
+cd source/cdk && cdk bootstrap $CDK_DEFAULT_ACCOUNT/$AWS_DEFAULT_REGION
 ```
 
 If the execution fails with an error, verify that your Amazon EC2 instance has the appropriate permissions role assigned.
@@ -155,14 +167,14 @@ You can change the following parameters as common configurations. No modificatio
 | snapshot | aes-siem-*[AWS Account ID]*-snapshot | S3 bucket name for snapshots |
 | geo | aes-siem-*[AWS Account ID]*-geo | S3 bucket name for GeoIP downloads |
 | kms_cmk_alias | aes-siem-key | Changes the alias name of the AWS KMS customer-managed key |
-| organizations | Automatically generates an S3 bucket policy by using the AWS Organizations information entered here. No input is required if you manage another S3 bucket by yourself |
+| organizations || Automatically generates an S3 bucket policy by using the AWS Organizations information entered here. No input is required if you manage another S3 bucket by yourself |
 | .org_id | Organizations ID. Example) o-12345678 |
-| .management_id | The AWS account ID that is the administrator account in Organizations |
-| .member_ids | The AWS account IDs that are member accounts in Organizations, separated by commas |
-| no_organizations | Automatically generates a bucket policy for accounts that are not managed by Organizations, by using the account information entered here. No input is required if you manage another S3 bucket by yourself |
-| .aws_accounts | Enter comma-separated AWS account IDs that are not managed by Oarganizations |
-| additional_s3_buckets | Enumerates S3 bucket names separated by commas |
-| additional_kms_cmks | Enumerates the ARNs of AWS KMS customer-managed keys, separated by commas |
+| .management_id || The AWS account ID that is the administrator account in Organizations |
+| .member_ids || The AWS account IDs that are member accounts in Organizations, separated by commas |
+| no_organizations || Automatically generates a bucket policy for accounts that are not managed by Organizations, by using the account information entered here. No input is required if you manage another S3 bucket by yourself |
+| .aws_accounts || Enter comma-separated AWS account IDs that are not managed by Organizations |
+| additional_s3_buckets || Enumerates S3 bucket names separated by commas |
+| additional_kms_cmks || Enumerates the ARNs of AWS KMS customer-managed keys, separated by commas |
 
 Finally, validate the JSON file. If JSON is displayed after execution and there is no error, the syntax of the JSON file is fine.
 
@@ -175,36 +187,76 @@ cdk context  --j
 Deploy the AWS CDK:
 
 ```bash
-cdk deploy --no-rollback
+cdk deploy
 ```
 
-You can specify the same parameters as for the CloudFormation template. The parameters can also be changed from the CloudFormation console after deployment with the CDK command.
+You can specify the same parameters as for the CloudFormation template. The parameters can also be changed from the CloudFormation console after deployment with the CDK command. During the initial installation, you can deploy without any parameters.
 
 | Parameter | Description |
 |------------|----|
+| **Initial Deployment Parameters** ||
 | AllowedSourceIpAddresses | The IP addresses that you want to allow access from when deploying SIEM on OpenSearch Service outside of your Amazon VPC. Multiple addresses are space-separated |
-|||
+| **Basic Configuration** ||
+| DeploymentTarget | Where would you like to deploy the SIEM solution? Value is  `opensearch_managed_cluster`(default) or `opensearch_serverless`. **Serverless is experimental option**|
+| DomainOrCollectionName | Amazon OpenSearch Service Domain name or OpenSearch Serverless Collection name|
 | SnsEmail | Email address. Alerts detected by SIEM on OpenSearch Service will be sent to this email address via SNS |
-| ReservedConcurrency | The maximum number of concurrency executions for es-loader. The default value is 10. Increase this value if you see delays in loading logs or if you see constant throttling occur even though there are no errors |
-|||
+| ReservedConcurrency | The maximum number of concurrency executions for es-loader. The default value is `10`. Increase this value if you see delays in loading logs or if you see constant throttling occur even though there are no errors |
+| **Log Enrichment - optional** ||
 | GeoLite2LicenseKey | Maxmind license key. It will add country information to each IP address |
-|OtxApiKey|If you wolud like to download IoC from AlienVault OTX, please enter OTX API Key.|
-|EnableTor|Would you like to download Tor IoC? Value is "true" or "false" (default)|
-|EnableAbuseCh|Would you like to download IoC from abuse.ch? Value is "true" or "false" (default)|
-|IocDownloadInterval|Specify interval in minute to download IoC, default is 720 miniutes|
+| OtxApiKey | If you wolud like to download IoC from AlienVault OTX, please enter OTX API Key.|
+| EnableTor | Would you like to download Tor IoC? Value is `true` or `false`(default)|
+| EnableAbuseCh| Would you like to download IoC from abuse.ch? Value is `true` or `false`(default)|
+| IocDownloadInterval| Specify interval in minute to download IoC, default is 720 minutes|
+| **Advanced Configuration - optional** ||
+| LogBucketPolicyUpdate | Select `update_and_override`(default) or `keep` for the current policy of the Log bucket. Be sure to select `update_and_override` for the first deployment. If you select `update_and_override` when updating, you need to create and manage the bucket policy for writing logs to your S3 Log bucket by yourself |
+| VpcEndpointId | Specify VPC Endpoint for OpenSearch managed cluster or OpenSearch Serverless. This should be manually created before deployment. If you specify VPC Endpoint, a few lambda functions and other resources will be deployed into VPC |
+| CreateS3VpcEndpoint | Create new S3 VPC Endpoint with SIEM solution. Value is `true`(default) or `false`. If you use existing VPC and already have S3 VPC Endpoint, select `false` |
+| CreateSqsVpcEndpoint | Create new SQS VPC Endpoint with SIEM solution. Value is `true`(default) or `false`. If you use existing VPC and already have SQS VPC Endpoint, select `false` |
+| CreateSsmVpcEndpoint | Create new Systems Manager VPC Endpoint with SIEM solution. Value is `true`(default) or `false`. If you use existing VPC and already have Systems Manager VPC Endpoint, select `false` |
+| CreateStsVpcEndpoint | Create new STS VPC Endpoint with SIEM solution. An STS VPC Endpoint is created only if you choose to integrate with Control Tower or Security Lake. Value is `true`(default) or `false`. If you use existing VPC and already have STS VPC Endpoint, select `false` |
+| **Control Tower Integration - optional** | [AWS Control Tower Integration](controltower.md) |
+| ControlTowerLogBucketNameList | Specify S3 log bucket names in the Log Archive account. Comma separated list. (e.g., `aws-controltower-logs-123456789012-ap-northeast-1, aws-controltower-s3-access-logs-123456789012-ap-northeast-1` )|
+| ControlTowerSqsForLogBuckets | Specify SQS ARN for S3 log buckets in Log Archive Account. (e.g., `arn:aws:sqs:ap-northeast-1:12345678902:aes-siem-ct` )|
+| ControlTowerRoleArnForEsLoader | Specify IAM Role ARN to be assumed by aes-siem-es-loader. (e.g., `arn:aws:iam::123456789012:role/ct-role-for-siem` )|
+| **Security Lake Integration - optional** | [Amazon Security Lake Integration](securitylake.md) |
+| SecurityLakeSubscriberSqs | Specify SQS ARN of Security Lake Subscriber. (e.g., `arn:aws:sqs:us-east-1:12345678902:AmazonSecurityLake-00001111-2222-3333-5555-666677778888-Main-Queue` ` ) |
+| SecurityLakeRoleArn | Specify IAM Role ARN to be assumed by aes-siem-es-loader. (e.g., `arn:aws:iam::123456789012:role/AmazonSecurityLake-00001111-2222-3333-5555-666677778888` ) |
+| SecurityLakeExternalId | Specify Security Lake external ID for cross account. (e.g., `externalid123` ) |
 
-Syntax) --parameters Option1=Parameter1 --parameters Option2=Parameter2
+Syntax) `--parameters Option1=Parameter1 --parameters Option2=Parameter2`
 If you have more than one parameter, repeat --parameters
 
 Example of deployment with parameters)
 
 ```bash
-cdk deploy --no-rollback \
+cdk deploy \
     --parameters AllowedSourceIpAddresses="10.0.0.0/8 192.168.0.1" \
     --parameters GeoLite2LicenseKey=xxxxxxxxxxxxxxxx
 ```
 
 The deployment takes about 30 minutes. When you're done, go back to README and proceed to “3. Configuring OpenSearch Dashboards.”
+
+### 7. Back up cdk.json and cdk.context.json
+
+Make a backup of cdk.json and cdk.context.json.
+
+Example of backing up to AWS Systems Manager Parameter Store
+
+```sh
+aws ssm put-parameter \
+  --overwrite \
+  --type String \
+  --name /siem/cdk/cdk.json \
+  --value file://cdk.json
+
+if [ -f cdk.context.json ]; then
+  aws ssm put-parameter \
+    --overwrite \
+    --type String \
+    --name /siem/cdk/cdk.context.json \
+    --value file://cdk.context.json
+fi
+```
 
 ## Updating SIEM with the AWS CDK
 
@@ -224,6 +276,34 @@ Go back to the [**Deploying with the AWS CDK**] section and rerun [**2. Setting 
 
 Note that [5. Setting Installation Options with the AWS CDK] and the subsequent steps **do not need to be followed**. Instead, execute the commands below:
 
+Restore `cdk.json` and `cdk.context.json` saved during installation to `${GIT_ROOT}/siem-on-amazon-opensearch-service/source/cdk/`. There may be no `cdk.context.json`.
+
+Example of restoring from AWS Systems Manager Parameter Store
+
+```sh
+cd ${GIT_ROOT}/siem-on-amazon-opensearch-service/source/cdk/
+if [ -s cdk.json ]; then
+  cp cdk.json cdk.json.`date "+%Y%m%d%H%M%S"`
+fi
+aws ssm get-parameter \
+  --name /siem/cdk/cdk.json \
+  --query "Parameter.Value" \
+  --output text > cdk.json
+
+if [ -s cdk.context.json ]; then
+  cp cdk.context.json cdk.context.json.`date "+%Y%m%d%H%M%S"`
+fi
+aws ssm get-parameter \
+  --name /siem/cdk/cdk.context.json \
+  --query "Parameter.Value" \
+  --output text > cdk.context.json.new 2> /dev/null
+if [ -s cdk.context.json.new ]; then
+  mv cdk.context.json.new cdk.context.json
+else
+  rm cdk.context.json.new
+fi
+```
+
 > **_Note_) When updating from v2.8.0d prior version, it is necessary to migrate from CDK v1 to CDK v2. Run cdk bootstrap again**
 
 ```sh
@@ -231,7 +311,7 @@ cd ${GIT_ROOT}/siem-on-amazon-opensearch-service/ && source .venv/bin/activate
 cd source/cdk
 # Also run `cdk bootstrap` if updating from v2.8.0d or prior version
 # cdk bootstrap
-cdk deploy --no-rollback
+cdk deploy
 ```
 
 Updated diffs will be displayed. Enter [**y**] to confirm. The update will be complete in a few minutes.

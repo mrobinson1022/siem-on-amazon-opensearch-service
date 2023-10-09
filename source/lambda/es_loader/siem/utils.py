@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT-0
 __copyright__ = ('Copyright Amazon.com, Inc. or its affiliates. '
                  'All Rights Reserved.')
-__version__ = '2.10.0a'
+__version__ = '2.10.2a'
 __license__ = 'MIT-0'
 __author__ = 'Akihiro Nakajima'
 __url__ = 'https://github.com/aws-samples/siem-on-amazon-opensearch-service'
@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
@@ -23,7 +24,6 @@ import botocore
 import jmespath
 import requests
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.utilities import parameters
 from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection
 
 try:
@@ -43,6 +43,12 @@ class MyEncoder(json.JSONEncoder):
 
 
 class AutoRefreshableSession:
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    if region.startswith('cn-'):
+        endpoint_url = f'https://sts.{region}.amazonaws.com.cn'
+    else:
+        endpoint_url = f'https://sts.{region}.amazonaws.com'
+
     def __init__(self, role_arn, role_session_name, external_id=None):
         self.role_arn = role_arn
         self.role_session_name = role_session_name
@@ -51,7 +57,8 @@ class AutoRefreshableSession:
         self.create_auto_refreshable_session()
 
     def _refresh(self):
-        sts_client = boto3.client('sts')
+        sts_client = boto3.client(
+            'sts', region_name=self.region, endpoint_url=self.endpoint_url)
         params = {
             'RoleArn': self.role_arn,
             'RoleSessionName': self.role_session_name,
@@ -91,7 +98,7 @@ RE_INSTANCEID = re.compile(
     r'(\W|_|^)(?P<instanceid>i-([0-9a-z]{8}|[0-9a-z]{17}))(\W|_|$)')
 RE_ACCOUNT = re.compile(r'\W([0-9]{12})/')
 RE_REGION = re.compile(
-    r'(global|(us|ap|ca|eu|me|sa|af|cn)-(gov-)?[a-zA-Z]+-[0-9])')
+    r'(global|(us|ap|ca|eu|il|me|sa|af|cn)-(gov-)?[a-zA-Z]+-[0-9])')
 # for timestamp
 RE_WITH_NANOSECONDS = re.compile(r'(.*)([0-9]{2}\.[0-9]{1,9})(.*)')
 RE_SYSLOG_FORMAT = re.compile(r'([A-Z][a-z]{2})\s+(\d{1,2})\s+'
@@ -101,6 +108,7 @@ MONTH_TO_INT = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
 NOW = datetime.now(timezone.utc)
 TD_OFFSET12 = timedelta(hours=12)
 TIMEZONE_UTC = timezone(timedelta(hours=0))
+RE_NOT_FRAGMENT_STR = re.compile(r'[&(){}@_;<>\s]')
 
 
 @lru_cache(maxsize=1024)
@@ -193,6 +201,104 @@ def validate_ip(value, ecs_key):
             return None
     else:
         return value
+
+
+@lru_cache(maxsize=100000)
+def extract_url_http_fields_from_http_request(
+        request_method: str, request_path: str, request_version: str,
+        request_raw: str) -> (dict, dict):
+    http = {}
+    url = {}
+
+    # http.version
+    if request_version:
+        http['version'] = request_version
+    # http.request.method
+    if request_method:
+        http['request'] = {'method': request_method}
+
+    # url.original
+    if request_raw:
+        url['original'] = request_raw
+    elif request_method and request_path and request_version:
+        url['original'] = request_path
+
+    if request_path is None:
+        request_path = ''
+    if request_path.startswith('/'):
+        pass
+    elif (request_path.startswith('http://')
+            or request_path.startswith('https://')):
+        try:
+            req_path_list = request_path.split('/', 3)
+            domain_org = req_path_list[2]
+            request_path = '/' + req_path_list[-1]
+            domain_org_split = domain_org.split(':')
+            if len(domain_org_split) == 1:
+                # no port
+                url['domain'] = domain_org_split[0]
+            elif len(domain_org_split) == 2:
+                # ipv4 or domain with port
+                url['domain'] = domain_org_split[0]
+                url['port'] = domain_org_split[1]
+        except Exception:
+            pass
+    elif request_method and request_method.lower() == 'connect':
+        path_temp_list = request_path.split(':')
+        if len(path_temp_list) == 2:
+            url['domain'] = path_temp_list[0]
+            url['port'] = path_temp_list[1]
+            request_path = ''
+
+    # urldecode
+    if '%' in request_path:
+        try:
+            request_path_new = urllib.parse.unquote(
+                request_path, errors='strict')
+            request_path = request_path_new
+            if '%' in request_path:
+                # For double url encode
+                request_path_new = urllib.parse.unquote(
+                    request_path, errors='strict')
+                request_path = request_path_new
+        except Exception:
+            request_path = request_path
+
+    # url.fragment
+    temp_path_list = request_path.rsplit('#')
+    if len(temp_path_list) == 2:
+        if RE_NOT_FRAGMENT_STR.search(temp_path_list[1]):
+            pass
+        else:
+            url['fragment'] = temp_path_list[1]
+            request_path = temp_path_list[0]
+
+    # url.path, url.query
+    temp_path_list = request_path.split('?', 1)
+    url['path'] = temp_path_list[0]
+    if len(temp_path_list) == 2:
+        url['query'] = temp_path_list[1]
+    # url.extension
+    filename = url['path'].split('/')[-1]
+    filename_split = filename.split('.')
+    if len(filename_split) > 1:
+        if '\\' not in filename_split[-1]:
+            url['extension'] = filename_split[-1]
+
+    return http, url
+
+
+@lru_cache(maxsize=100000)
+def parse_xff(xff: str) -> list:
+    xff_ip_list = []
+    for ip_raw in xff.split(','):
+        ip_raw = ip_raw.strip()
+        try:
+            ipaddress.ip_address(ip_raw.strip())
+            xff_ip_list.append(ip_raw)
+        except Exception:
+            continue
+    return xff_ip_list
 
 
 #############################################################################
@@ -537,11 +643,41 @@ def get_etl_config():
     return etl_config
 
 
+def get_ssm_params(parameters_prefix):
+    config = botocore.config.Config(
+        connect_timeout=2,
+        retries={"total_max_attempts": 1, "max_attempts": 1})
+    ssm_client = boto3.client('ssm', config=config)
+    try:
+        res = ssm_client.get_parameters_by_path(
+            Path=parameters_prefix, Recursive=True, WithDecryption=False,
+            MaxResults=10)
+    except Exception:
+        logger.exception('Could not connect to SSM Endpoint '
+                         'or could not get SSM parameters.')
+        return
+
+    next_token = None
+    while True:
+        if next_token:
+            res = ssm_client.get_parameters_by_path(
+                Path=parameters_prefix, Recursive=True, WithDecryption=False,
+                MaxResults=10, NextToken=next_token)
+        for p in res['Parameters']:
+            parameter_name_with_prefix = p['Name']
+            parameter_name = parameter_name_with_prefix.replace(
+                parameters_prefix, '')
+            parameter = p['Value']
+            yield parameter_name, parameter
+        next_token = res.get('NextToken')
+        if next_token is None:
+            break
+
+
 def get_exclusion_conditions():
     parameters_prefix = '/siem/exclude-logs/'
-    exclusion_parameters = parameters.get_parameters(parameters_prefix)
     exclusion_conditions = {}
-    for parameter_name, parameter in exclusion_parameters.items():
+    for parameter_name, parameter in get_ssm_params(parameters_prefix):
         parameter_name_with_prefix = parameters_prefix + parameter_name
         if '/' not in parameter_name:
             logger.error(
